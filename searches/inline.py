@@ -19,7 +19,7 @@ inline_matches = {
             8,
         ),
         (
-            # Matches "/Roo"[t] ((shortened to be even length))
+            # Matches "/Roo"[t] (shortened to be even length)
             b"\x2F\x52\x6F\x6F",
             9,
         ),

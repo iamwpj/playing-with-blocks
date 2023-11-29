@@ -15,11 +15,11 @@
 * MD5 sum = 017c90727e8dfcb757ae189cacc74c18
 
 
-# Characteristics of the blocks
+## Characteristics of the blocks
 
 Each block is 512 bytes. Typically the blocks are full of data, but in the case where a file ends within a block sector the remaineder is filled with `00` hexidecimal values. This is an important feature since it guarantees that all file signatures will be found at the beginning of the file. When searching for file signatures, I had to rely on this facet as the PDF document (I suspect) contained JPEG images, resulting in several matches for the same hexadecimal set.
 
-# Detecting Documents
+## Detecting Documents
 
 I performed research for each of the above expected files, Microsoft Word document (`doc`, Word 1997-2004 specification), PDF, and JPEG (JFIF 3.0 standard). I was able to determine the correct versions by referencing the file signatures listing [^1] on Wikipedia. The appropriate hexidecimal codes for each are as follows:
 
@@ -29,32 +29,167 @@ PDF:  \x25\x50\x44\x46\x2D
 JPEG: \xFF\xD8\xFF\xE0\x00\x10\x4A\x46
 ```
 
-Each of these are programmed manually in the [signatures.py](./conversions/signatures.py) dictionary. This identification process became the first step in my process to enumerate the blocks. I started with a broader list of signatures and then pared down based on the matching results. The matching step for file signOnce I had these confirmed I began a process to generate samples of each type of file type.
+Each of these are programmed manually in the [signatures.py](./conversions/signatures.py) dictionary. This identification process became the first step in my process to enumerate the blocks. I started with a broader list of signatures and then pared down based on the matching results.
+
+Before I did any additional block to file type allocation based on estimation, I defined another set of **end of file** and other **inline** matches.
+
+### End of file
+
+These are hexadecimal patterns common to the end of a file. These are either found at the very end of a file (resulting in the hexadecimal pattern followed by empty values until the end of the sector) or near enough to be contained _within_ the same block as the actual end of the file. These are specified in [end_of_file.py](conversions/end_of_file.py)
+
+| File signature | Hex pattern | Description |
+| --- | --- | --- |
+| DOC | `\x44\x6F\x63\x75\x6D\x65\x6E\x74` | "Document" -- a phrase commonly embedded at/near the end of Microsoft Word Documents.|
+| PDF | `\x25\x25\x45\x4F\x46\x0D\x0A\x00` | "%%EOF" it will additionally match empty space to avoid mis-match of blocks within the same PDF file. |
+| JPEG | `\xFF\xD9\x00\x00` | Standard end of file, [^3] |
+
+### Inline
+
+There are certain patterns that only match certain file types (at least beween the three selected options here). These are ordered randomly or in a non-specific way within the file. Isolating these types of matches will make my end result more accurate. These are specified in [inline.py](./searches/inline.py). The research for each was from analyzing sample documents, JPEG resources [^3],[^4], and PDF resources [^5]
+
+| File signature | Hex pattern | Description |
+| --- | --- | --- |
+| DOC | `\x2E\x78\x6D\x6C` | `[Content_Types].xml` – used for theming. Appears early. |
+| PDF | `\x2F\x50\x61\x67` | Matches `/Pag`[e][s] (shortened to be even length) |
+| PDF | `\x2F\x52\x6F\x6F` | Matches `/Roo`[t] ((shortened to be even length)) |
+| PDF | `\x30\x30\x30\x30\x20\x6E` | Matches [0]`0000 n` (shortened to be even length) |
+| PDF | `\x78\x72\x65\x66` | Matches `xref` |
+| PDF | `\x3E\x3E\x20\x2F` | Matches `>> /` – common formatters in PDF |
+| PDF | `\x65\x6E\x64\x73\x74\x72\x65\x61` | Matches `endstrea`[m] (shortened to be even length) |
+| PDF | `\x2F\x50\x72\x6F\x64\x75\x63\x65` | Matches `/Produce`[r] (shortened to be even length) |
+| PDF | `\x20\x36\x35\x35\x33\x35\x20\x66` | This matches against what's already in the trailer -- always at the end. |
+| JPEG | `\xFF\xD9` | This denotes the end of a thumbnail. It should only find valid results since it's being found after the standard endmatter. |
+
+
+Once I had these confirmed I began a process to generate samples of each type of file type.
+
+## Generating Samples
+
+Samples will be used for baseline statistical analysis. The goal of this analysis is to have a typical character set range for each of the document types. With this numerical range established blocks can be sequentially allocated to the correct _parent_ (file signature). When this parent block is combined with all of it's children a full document is created.
 
 You can find the samples in [samples](./samples).
 
-## JPEG
-
-### Sample
+### JPEG Sample
 
 This is a simple an image pulled from _Lorem Picsum_[^2], an image placeholder provider.
 
-### Identifying
+### DOC Sample
 
-- https://en.wikipedia.org/wiki/JPEG_File_Interchange_Format
-- https://www.w3.org/Graphics/JPEG/jfif3.pdf
+I generated a document using Microsoft Word. After some preliminary analyzation of the blocks, I knew that the character set of a `doc` file is stored in plaintext. This means that hexidecimal analyzation will be possible by limited results to a narrow spectrum of characters (commonly, the Latin alphabet). In order to get a proper statistical analysis it was important to collude this data with images, citations, and tables -- all including characters that would affect the analysis. This file was saved using the Microsoft Word compatibility 1997-2004 format (identical to the format found in the file signature data).
+
+### PDF Sample
+
+This was generated by re-encoding the Word document using Microsoft's built in tooling to a PDF. All of the advantages of the Word document design applies to PDF analyzation.
+
+## Managing Data and Building a Toolset
+
+**Python modules utilized:**
+* NumPy [^6]
+* Dataclasses [^7]
+* Jupyter [^8]
+
+I used the following process to read the data:
+
+```mermaid
+flowchart TD
+    L[Load data from blocks into a NumPy array as <code>np.uint8</code> values]
+    M1[match file signatures]
+    M2[match end of file]
+    M3[match specific inline]
+    M4[match by probability]
+    R[Remove block from list]
+    D[Load to data structure]
+    S[Save with ordering]
+    YN{Match}
+
+    L --> | Step 1 | M1 --> YN --> | True | R --> D
+    L --> | Step 2 | M2 --> YN --> | True | R --> D
+    L --> | Step 3 | M3 --> YN --> | True | R --> D
+    L --> | Step 4 | M4 --> YN --> | True | R --> D
+    D --> S
+```
+
+The data processing order is important as for each `TRUE` match the block will be removed from the list of potential future matches.
+
+Here is an example of the NumPy array:
+
+```python
+$ data = np.fromfile(open('blockset/BLOCK0009','rb'),dtype=np.uint8)
+$ print(data)
+[111 118 101 114  32 116 104 114 101  97 100 115  44  32 105 110  32 116
+ 104 105 115  32 112  97 112 101 114  32 119 101  32 114 101 112 111 114
+ 116  32 111 110 108 121  32 116 104 101  32  73  80  67  32 102 111 114
+  32 101  97  99 104  13 101 120 112 101 114 105 109 101 110 116  46  13
+  51  46  32  83  80  69  67  85  76  65  84  73  79  78  32  79  78  32
+  83  77  84  13  84 104 105 115  32 115 101  99 116 105 111 110  32 112
+ 114 101 115 101 110 116 115  32 116 104 101  32 114 101 115 117 108 116
+ 115  32 111 102  32 111 117 114  32 115 105 109 117 108  97 116 105 111
+ 110  32 101 120 112 101 114 105 109 101 110 116 115  32 111 110  32 105
+ 110 115 116 114 117  99 116 105 111 110  13 115 112 101  99 117 108  97
+ 116 105 111 110  32 102 111 114  32  83  77  84  46  32  79 117 114  32
+ 103 111  97 108  32 105 115  32 116 111  32 117 110 100 101 114 115 116
+  97 110 100  32 116 104 101  32 116 114  97 100 101  45 111 102 102 115
+  32  98 101 116 119 101 101 110  32 116 119 111  32  97 108 116 101 114
+ 110  97 116 105 118 101  13 109 101  97 110 115  32 111 102  32 104 105
+ 100 105 110 103  32  98 114  97 110  99 104  32 100 101 108  97 121 115
+  58  32 105 110 115 116 114 117  99 116 105 111 110  32 115 112 101  99
+ 117 108  97 116 105 111 110  32  97 110 100  32  83  77  84 146 115  13
+  97  98 105 108 105 116 121  32 116 111  32 101 120 101  99 117 116 101
+  32 105 110 115 116 114 117  99 116 105 111 110 115  32 102 114 111 109
+  32 109 117 108 116 105 112 108 101  32 116 104 114 101  97 100 115  32
+ 101  97  99 104  32  99 121  99 108 101  46  32  70 105 114 115 116  44
+  32 119 101  32  99 111 109 112  97 114 101  13 116 104 101  32 112 101
+ 114 102 111 114 109  97 110  99 101  32 111 102  32  97 110  32  83  77
+  84  32 112 114 111  99 101 115 115 111 114  32 119 105 116 104  32  97
+ 110 100  32 119 105 116 104 111 117 116  32 115 112 101  99 117 108  97
+ 116 105 111 110  32  97 110 100  13  97 110  97 108 121 122 101  32 116
+ 104 101  32 100 105 102 102 101 114 101 110  99 101 115  32  98 101 116
+ 119 101 101 110  32 116 104 101]
+```
+
+### Data structure
+
+To accurate maintain the information needed about a block I relied on `dataclasses` to define strutured arrays.
+
+```mermaid
+classDiagram
+
+    Found <|-- OrderedBlocks
+
+    class Found{
+        id: str
+        file_path: Path
+        signature: bytes
+        signature_name: str
+        block: np.ndarray
+        endmatter: bytes = None
+        endmatter_name: str = None
+        child_blocks: Optional[List[OrderedBlocks]] = None
+    }
+    
+    class OrderedBlocks{
+        id: str
+        parent: str
+        block: np.array
+        order: int or str = 1
+    }
+
+```
+
+As blocks are iterated over specific parameters for each match determines order. For example, the inline matches will have an order integer assigned to each match. As the final array is assembled each block is placed into the array at the specified order. This allows for dynamic ordering during processing and repeated order associations – e.g., a block that matches for order `200` will be inserted into that number at an array effectively sliding the existing index at the point to the right (to `201`).
+
 
 ### Testing
 
 - Testing JPEG: https://www.kokkonen.net/tjko/src/man/jpeginfo.txt 
 - https://stackoverflow.com/questions/1401527/how-do-i-programmatically-check-whether-an-image-png-jpeg-or-gif-is-corrupte/1401565#1401565
 
-## PDF
-
-### Identifying
-
-- https://www.oreilly.com/library/view/developing-with-pdf/9781449327903/ch01.html#example_1-12
-
 
 [^1]: https://en.wikipedia.org/wiki/List_of_file_signatures
 [^2]: https://picsum.photos
+[^3]: https://en.wikipedia.org/wiki/JPEG_File_Interchange_Format
+[^4]: https://www.w3.org/Graphics/JPEG/jfif3.pdf
+[^5]: https://www.oreilly.com/library/view/developing-with-pdf/9781449327903/ch01.html#example_1-12
+[^6]: https://numpy.org
+[^7]: https://docs.python.org/3/library/dataclasses.html
+[^8]: https://jupyter.org
