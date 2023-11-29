@@ -1,0 +1,9 @@
+.DS_Store
+.536-proj3/
+.venv/
+test/
+test_out/
+tmp/
+test.py
+CP3-3-blockset.zip
+__pycache__/
