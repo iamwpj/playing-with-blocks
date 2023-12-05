@@ -13,8 +13,6 @@ from conversions.end_of_file import end_of_file
 from searches.inline import inline_matches
 from searches.character_types import character_types
 
-import mixmaster as mm
-
 
 @dataclass(init=True, repr=True)
 class OrderedBlocks:
@@ -80,12 +78,15 @@ def save(filename: Path, data: np.array):
     """Save array to file
 
     Args:
-        filename (Path): Provide a destination to save in.
+        filename (Path): Provide a destination to save in. Automatically will save a npy backup too.
         data (np.array): Provide the data array.
     """
 
-    with open(filename, "wb+") as f:
+    with open(f"{filename}.npy", "wb+") as f:
         np.save(f, data)
+
+    with open(filename, "wb+") as f:
+        np.ndarray.tofile(data,file=f)
 
 
 def combinator(filename: Path, block: Found):
@@ -96,24 +97,25 @@ def combinator(filename: Path, block: Found):
         blocks (Found): An object of a found item. This assumes your list is ordered.
     """
 
-    with open(filename, "wb+") as f:
-        # Start with initial data (header)
-        ordered = [block.block]
+    # Start with initial data (header)
+    ordered = [block.block]
 
-        # Then add ordering
-        [
-            ordered.insert(cb.order, cb.block)
-            for cb in block.child_blocks
-            if cb.order != "end"
-        ]
+    # Then add ordering
+    [
+        ordered.insert(cb.order, cb.block)
+        for cb in block.child_blocks
+        if cb.order != "end" and len(cb.block) == 512
+    ]
 
-        # Append the end block
-        [ordered.append(cb.block) for cb in block.child_blocks if cb.order == "end"]
+    # Append the end block
+    [ordered.append(cb.block) for cb in block.child_blocks if cb.order == "end"]
 
-        # Append ordered to output and write.
-        output = np.vstack(ordered)
-        save(filename, output)
-        print(f"\tWrote {len(output)*512} bytes to {filename}")
+    print(f"ORDERED: {block.id}: {len(ordered)}:{len(block.child_blocks)} aligned")
+
+    # Append ordered to output and write.
+    output = np.vstack(ordered)
+    save(filename, output)
+    print(f"\tWROTE {len(output)*512} bytes to {filename}")
 
 
 byte_blocks = []
@@ -147,7 +149,7 @@ for sig_name, sig in sig_items:
                 )
             )
 
-            print(f"HEADER\tMatched: {[hex(x) for x in sig]}\t{n.name}.")
+            print(f"HEADER\tMATCHED: {[hex(x) for x in sig]}\t{n.name}.")
 
             # Do not match this to any other potential files.
             byte_blocks.remove((n, b))
@@ -170,7 +172,7 @@ for hit in header_hits:
 
         for n, b in byte_blocks:
             if matchmaker(search_in=b, search_for=hit.endmatter):
-                print(f"END\tMatched: {[hex(x) for x in hit.endmatter]}\t{n.name}")
+                print(f"END\tMATCHED: {[hex(x) for x in hit.endmatter]}\t{n.name}")
                 hit.child_blocks.append(
                     OrderedBlocks(id=n.name, parent=hit.id, block=b, order="end")
                 )
@@ -187,7 +189,7 @@ for hit in header_hits:
         for n, b in byte_blocks:
             if matchmaker(search_in=b, search_for=search_term):
                 print(
-                    f"INLINE\tMatched: {[hex(x) for x in search_term]}\t{n.name}: {order}:{hit.id}"
+                    f"INLINE\tMATCHED: {[hex(x) for x in search_term]}\t{n.name}: {order}:{hit.id}"
                 )
                 hit.child_blocks.append(
                     OrderedBlocks(id=n.name, parent=hit.id, block=b, order=order)
@@ -199,8 +201,8 @@ for hit in header_hits:
 
     # Search for character objects
     if hit.signature_name in character_types.keys():
-        for n, b in byte_blocks:
-            for rule in character_types[hit.signature_name].rules:
+        for rule in character_types[hit.signature_name].rules:
+            for n, b in byte_blocks:
                 nonempty = np.array(b[np.argwhere(b != 255)])
                 found_values = np.array(
                     nonempty[
@@ -212,7 +214,7 @@ for hit in header_hits:
                 found_match_percent = (len(found_values) / len(nonempty)) * 100
                 if found_match_percent >= rule.match_percent:
                     print(
-                        f"INLINE\tMatched: {character_types[hit.signature_name].rule_name}\t{n.name}: {rule.order}:{hit.id}:{found_match_percent}% matched"
+                        f"INLINE\tMATCHED: {character_types[hit.signature_name].rule_name}\t{n.name}: {rule.order}: {hit.id}: {found_match_percent}% matched"
                     )
                     hit.child_blocks.append(
                         OrderedBlocks(
@@ -225,11 +227,11 @@ for hit in header_hits:
                     byte_blocks.remove((n, b))
                 else:
                     print(
-                        f"INLINE\tFAILED: {character_types[hit.signature_name].rule_name}\t{n.name}: {rule.order}:{hit.id}:{found_match_percent}% matched"
+                        f"INLINE\tFAILED: {character_types[hit.signature_name].rule_name}\t{n.name}: {rule.order}: {hit.id}: {found_match_percent}% matched"
                     )
     # Write output
 
     combinator(
-        filename=f"./test_out/run-{hit.id}.{file_exts[hit.signature_name]}.npy",
+        filename=f"./out/run-{hit.id}.{file_exts[hit.signature_name]}",
         block=hit,
     )

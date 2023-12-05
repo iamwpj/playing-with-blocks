@@ -31,6 +31,24 @@ JPEG: \xFF\xD8\xFF\xE0\x00\x10\x4A\x46
 
 Each of these are programmed manually in the [signatures.py](./conversions/signatures.py) dictionary. This identification process became the first step in my process to enumerate the blocks. I started with a broader list of signatures and then pared down based on the matching results.
 
+Example of matching signature from JPEG design standards[^3]:
+
+```plain
+FFD8		JPEG - start of image
+FFE0		JFIF-APP0
+
+0010		Length (excludes APP0 marker)
+4A46494600	Identifier, JFIF (in ASCII), with a null byte
+
+0101		Version (1.01)
+00		Density - see x & y for data
+0001		X Density
+0001		Y Density
+0000		Thumbnail x & y
+
+--- start data
+```
+
 Before I did any additional block to file type allocation based on estimation, I defined another set of **end of file** and other **inline** matches.
 
 ### End of file
@@ -59,7 +77,6 @@ There are certain patterns that only match certain file types (at least beween t
 | PDF | `\x2F\x50\x72\x6F\x64\x75\x63\x65` | Matches `/Produce`[r] (shortened to be even length) |
 | PDF | `\x20\x36\x35\x35\x33\x35\x20\x66` | This matches against what's already in the trailer -- always at the end. |
 | JPEG | `\xFF\xD9` | This denotes the end of a thumbnail. It should only find valid results since it's being found after the standard endmatter. |
-
 
 Once I had these confirmed I began a process to generate samples of each type of file type.
 
@@ -103,13 +120,13 @@ flowchart TD
     YN{Match}
 
     L --> | Step 1 | M1 --> YN --> | True | R --> D
-    L --> | Step 2 | M2 --> YN --> | True | R --> D
-    L --> | Step 3 | M3 --> YN --> | True | R --> D
-    L --> | Step 4 | M4 --> YN --> | True | R --> D
+    M1 --> | Step 2 | M2 --> YN --> | True | R --> D
+    M1 --> | Step 3 | M3 --> YN --> | True | R --> D
+    M1 --> | Step 4 | M4 --> YN --> | True | R --> D
     D --> S
 ```
 
-The data processing order is important as for each `TRUE` match the block will be removed from the list of potential future matches.
+The data processing order is important as for each `TRUE` match the block will be removed from the list of potential future matches. For all steps after the first match (file signatures) they are organized under the file signature name. This means each unassigned block will be iterated, checked for match patterns, assigned if true, and the data object for that file signature type will be updated.
 
 Here is an example of the NumPy array:
 
@@ -178,11 +195,34 @@ classDiagram
 
 As blocks are iterated over specific parameters for each match determines order. For example, the inline matches will have an order integer assigned to each match. As the final array is assembled each block is placed into the array at the specified order. This allows for dynamic ordering during processing and repeated order associations – e.g., a block that matches for order `200` will be inserted into that number at an array effectively sliding the existing index at the point to the right (to `201`).
 
+### Probabilty-based identification
 
-### Testing
+Once the header, end of file, and common inline matches are met, there is still a bulk of unidentified block data. This data can vary significantly (at least between the three selected document types). I utilized the [sample documents](#generating-samples) to establish probability of character occurences in documents.
 
-- Testing JPEG: https://www.kokkonen.net/tjko/src/man/jpeginfo.txt 
-- https://stackoverflow.com/questions/1401527/how-do-i-programmatically-check-whether-an-image-png-jpeg-or-gif-is-corrupte/1401565#1401565
+> [!NOTE]
+> This is unpolished.
+
+The intial process loaded in [statistic.ipynb](./statistics.ipynb) and implemented in the code using the [character_types.py](./searches/character_types.py) tooling. This code allows a simple rule to be created that matches the numpy array `uint8` values (`0-255`) that align with ASCII characters. The rule will be defined with the following parameters:
+
+* `start`
+* `end`
+* `match_percent` – The selected values from the block of interest must be `>=` than this number.
+
+I only implemented a cursory approach to this. The common Latin alphabet occurs within 65-122 (Aa-Zz) so I applied a rule for this to the Word document for a match of 30%. The rules cascade since blocks that match are removed from the available match set – so I utilze the same alphabet rule to match PDF files just at a lower precentage (10%). Any unmatched blocks are saved as JPEG.
+
+## Improvements
+
+There's a lot of room for improvement (since I can't open the files yet).
+
+### Probability Matching
+
+The majority comes with the probability matching. I think I should subdivide the blocks into smaller "words" and scan those. My calculations for probabilities can be automated from the sample documents by breaking those down to smaller segents and generating the `CharacterTypesRule` via code. I believe my method of data handling is very efficient for pattern detecting (NumPy and Pandas).
+
+### Ordering
+
+I don't have a good solution to determining block order. I think the JPEG option could involve rotating and testing using a common JPEG validity library [^9]. 
+
+The Word document might be well suited to hand placement using a prompting style, but that could be quite time consuming. This is similar to the PDF in the sense that detecting a valid combiniation of segments is challenging. It might be possible to create a valid document with an empty middle, that matches the length of identified segments from the random block data. From this working document blocks could be swapped in and out one at a time. A valid entry would ensure that even in the case of out-of-order text, the functionailty of the document is not affected.
 
 
 [^1]: https://en.wikipedia.org/wiki/List_of_file_signatures
@@ -193,3 +233,4 @@ As blocks are iterated over specific parameters for each match determines order.
 [^6]: https://numpy.org
 [^7]: https://docs.python.org/3/library/dataclasses.html
 [^8]: https://jupyter.org
+[^9]: https://www.kokkonen.net/tjko/src/man/jpeginfo.txt

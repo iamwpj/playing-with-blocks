@@ -3,6 +3,7 @@
 .venv/
 test/
 test_out/
+test.ipynb
 tmp/
 test.py
 CP3-3-blockset.zip
